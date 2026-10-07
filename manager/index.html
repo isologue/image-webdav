@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image WebDAV</title>
+  <style>
+    :root { font-family: system-ui, "Microsoft YaHei", sans-serif; color: #202a31; background: #f4f6f6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input { font: inherit; }
+    button { cursor: pointer; border: 1px solid #c7d3d3; background: white; color: #173d42; border-radius: 5px; padding: 9px 14px; min-height: 39px; }
+    button:hover { background: #e9f4f2; }
+    button:focus-visible, input:focus-visible { outline: 2px solid #087d73; outline-offset: 2px; }
+    button.primary { background: #087d73; border-color: #087d73; color: white; }
+    button.primary:hover { background: #086b64; }
+    button.danger { color: #a53131; border-color: #e2c5c5; }
+    button:disabled { opacity: .55; cursor: wait; }
+    header { background: #fff; border-bottom: 1px solid #d8e0df; }
+    .header-inner { max-width: 1160px; margin: auto; padding: 0 24px; display: flex; align-items: center; min-height: 67px; gap: 32px; }
+    .brand { font-size: 18px; font-weight: 700; color: #176b65; white-space: nowrap; }
+    nav { display: flex; align-self: stretch; gap: 6px; }
+    nav button { border: none; border-radius: 0; min-width: 80px; background: transparent; color: #58676a; }
+    nav button.active { border-bottom: 2px solid #087d73; color: #075f58; font-weight: 650; }
+    main { max-width: 1160px; padding: 28px 24px 70px; margin: auto; }
+    h1 { font-size: 24px; margin: 0 0 5px; }
+    h2 { font-size: 17px; margin: 0 0 16px; }
+    p { color: #627276; line-height: 1.5; }
+    .heading { display: flex; align-items: end; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 24px; }
+    .heading p { margin: 0; font-size: 13px; }
+    .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 0; border-block: 1px solid #d8e0df; }
+    .crumbs { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+    .crumbs button { border: 0; background: none; padding: 5px 2px; min-height: 30px; }
+    .count { font-size: 12px; color: #607176; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; table-layout: fixed; }
+    th { color: #607176; font-size: 12px; font-weight: 600; padding: 13px 10px; }
+    td { border-top: 1px solid #dfe6e5; padding: 12px 10px; font-size: 13px; }
+    th:nth-child(1) { width: 48%; } th:nth-child(2) { width: 13%; } th:nth-child(3) { width: 20%; }
+    td a { color: #0d716a; text-decoration: none; overflow-wrap: anywhere; }
+    td a:hover { text-decoration: underline; }
+    td .type { background: #e7efee; border-radius: 3px; padding: 4px 6px; margin-right: 10px; font-size: 12px; color: #3d6664; }
+    td .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    td button { min-height: 30px; padding: 3px 8px; font-size: 12px; }
+    .empty { padding: 54px 10px; text-align: center; color: #65787a; }
+    .section { border-top: 1px solid #d8e0df; padding: 24px 0 27px; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; max-width: 850px; }
+    label { display: block; color: #384e52; font-size: 13px; font-weight: 600; }
+    label input { display: block; width: 100%; margin-top: 7px; padding: 10px 12px; border: 1px solid #bdcccb; background: white; border-radius: 5px; min-height: 42px; }
+    label.check-line { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+    label.check-line input { width: 18px; height: 18px; min-height: 0; margin: 0; accent-color: #087d73; }
+    .cleanup-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+    .cleanup-actions label { width: min(240px, 100%); }
+    .cleanup-status { font-size: 13px; margin: 15px 0 0; }
+    .hint { font-size: 12px; color: #657579; margin-top: 8px; }
+    .config-list { display: grid; grid-template-columns: minmax(125px, 220px) minmax(0, 1fr); gap: 0 16px; max-width: 850px; }
+    .config-list dt, .config-list dd { padding: 12px 0; border-bottom: 1px solid #d8e0df; margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+    .config-list dt { color: #66777b; }
+    .config-list dd { user-select: all; }
+    .config-list code { background: #e9efee; padding: 3px 5px; border-radius: 3px; }
+    .save-row { margin-top: 22px; }
+    #notice { position: fixed; bottom: 20px; right: 20px; background: #173e3d; color: white; border-radius: 5px; padding: 12px 17px; max-width: min(440px, calc(100vw - 40px)); box-shadow: 0 8px 24px #25453a33; display: none; z-index: 3; }
+    #notice.error { background: #a53131; }
+    dialog { border: 0; border-radius: 6px; width: min(600px, calc(100vw - 32px)); padding: 20px; box-shadow: 0 24px 65px #25373755; }
+    dialog::backdrop { background: #1c2d37a8; }
+    dialog img { display: block; max-width: 100%; max-height: 65vh; margin: 15px auto; }
+    dialog input { width: 100%; padding: 10px 12px; border: 1px solid #bdcccb; border-radius: 5px; margin: 12px 0; }
+    .preview-actions { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    @media(max-width: 680px) {
+      .header-inner { padding: 0 16px; gap: 16px; }
+      main { padding: 22px 16px 60px; }
+      .fields { grid-template-columns: 1fr; }
+      th:nth-child(1) { width: 45%; } th:nth-child(2) { width: 20%; } th:nth-child(3) { display: none; }
+      td:nth-child(3) { display: none; }
+      .config-list { grid-template-columns: 1fr; }
+      .config-list dt { border: 0; padding-bottom: 0; }
+      .config-list dd { padding-top: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <header><div class="header-inner"><span class="brand">Image WebDAV</span><nav><button id="files-tab" class="active" type="button">图片文件</button><button id="settings-tab" type="button">服务配置</button></nav></div></header>
+  <main>
+    <section id="files-view">
+      <div class="heading"><div><h1>图片文件</h1><p>存储在此服务器上的图片</p></div><div class="actions"><input id="upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><button id="upload-button" class="primary" type="button">上传图片</button><button id="refresh-button" type="button">刷新</button></div></div>
+      <div class="bar"><div id="crumbs" class="crumbs"></div><span id="count" class="count"></span></div>
+      <div class="table-wrap"><table><thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <div id="empty" class="empty" hidden>当前目录暂无图片</div>
+    </section>
+    <section id="settings-view" hidden>
+      <div class="heading"><div><h1>服务配置</h1><p>管理上传凭据与公开访问地址</p></div></div>
+      <div class="section"><h2>访问凭据</h2><div class="fields"><label>WebDAV / 管理页用户名<input id="username" autocomplete="username" maxlength="64"></label><label>新密码<input id="password" type="password" autocomplete="new-password" placeholder="不修改请留空，修改至少 12 位"></label></div><div class="hint">两处入口使用同一组凭据。新密码至少 12 位；修改后浏览器可能要求重新登录。</div></div>
+      <div class="section"><h2>公开地址</h2><div class="fields"><label>访问域名（可选）<input id="public-base" type="url" placeholder="https://img.example.cn"></label></div><div class="hint">线上部署填国内服务器的 HTTPS 域名；留空时下方使用当前浏览器地址。</div></div>
+      <div class="save-row"><button id="save-button" class="primary" type="button">保存配置</button></div>
+      <div class="section" style="margin-top:28px"><h2>存储清理</h2>
+        <label class="check-line"><input id="auto-enabled" type="checkbox">定时清理</label>
+        <div class="fields"><label>保留时长（小时）<input id="retention-hours" type="number" min="1" max="8760" step="1" value="72"></label><label>检查间隔（小时）<input id="interval-hours" type="number" min="1" max="168" step="1" value="1"></label></div>
+        <div class="cleanup-actions"><button id="save-cleanup" type="button">保存清理规则</button></div>
+        <p id="next-cleanup" class="cleanup-status"></p>
+        <div class="cleanup-actions"><label>立即清理早于（小时）<input id="manual-hours" type="number" min="1" max="8760" step="1"></label><button id="run-cleanup" class="danger" type="button">立即清理</button></div>
+        <p id="last-cleanup" class="cleanup-status"></p>
+      </div>
+      <div class="section" style="margin-top:28px"><h2>在服务器 A 中填写</h2><dl class="config-list"><dt>WebDAV URL</dt><dd><code id="dav-url"></code></dd><dt>用户名</dt><dd><code id="dav-user"></code></dd><dt>根路径</dt><dd><code>chatgpt2api/images</code></dd><dt>公开访问前缀</dt><dd><code id="public-url"></code></dd><dt>存储模式</dt><dd>本地 + WebDAV（先测试）；或仅 WebDAV</dd></dl></div>
+    </section>
+  </main>
+  <dialog id="preview"><div class="preview-actions"><strong id="preview-name"></strong><button id="close-preview" type="button">关闭</button></div><img id="preview-image" alt="图片预览"><div class="actions"><button id="copy-link" type="button">复制图片地址</button><a id="open-link" target="_blank" rel="noopener noreferrer">在新窗口打开</a></div></dialog>
+  <dialog id="manual-copy" aria-labelledby="manual-copy-title"><h2 id="manual-copy-title">图片地址</h2><p>浏览器未允许自动复制。选中下方地址，按 Ctrl+C 复制。</p><input id="manual-copy-url" aria-label="图片地址" readonly><button id="close-manual-copy" type="button">关闭</button></dialog>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <script>
+    const $ = id => document.getElementById(id);
+    let currentPath = '';
+    let previewUrl = '';
+    let timer;
+    function notice(message, error = false) {
+      const node = $('notice'); node.textContent = message; node.classList.toggle('error', error); node.style.display = 'block';
+      clearTimeout(timer); timer = setTimeout(() => node.style.display = 'none', 5000);
+    }
+    async function api(path, options = {}) {
+      const response = await fetch('/admin/api/' + path, {...options, headers: {'X-Requested-With': 'image-manager', ...(options.headers || {})}});
+      if (!response.ok) {
+        let error;
+        try { error = (await response.json()).detail; } catch { error = response.statusText; }
+        throw new Error(typeof error === 'string' ? error : `HTTP ${response.status}`);
+      }
+      return response.json();
+    }
+    function show(view) {
+      $('files-view').hidden = view !== 'files'; $('settings-view').hidden = view !== 'settings';
+      $('files-tab').classList.toggle('active', view === 'files'); $('settings-tab').classList.toggle('active', view === 'settings');
+      if (view === 'settings') loadSettings(); else loadFiles();
+    }
+    function drawCrumbs(path) {
+      const node = $('crumbs'); node.replaceChildren();
+      const parts = path ? path.split('/') : [];
+      for (let i = 0; i <= parts.length; i++) {
+        if (i) node.append(document.createTextNode(' / '));
+        const button = document.createElement('button'); button.textContent = i ? parts[i - 1] : '全部图片';
+        const destination = parts.slice(0, i).join('/'); button.onclick = () => { currentPath = destination; loadFiles(); };
+        node.append(button);
+      }
+    }
+    function size(bytes) {
+      if (bytes == null) return '-';
+      if (bytes < 1024) return `${bytes} B`;
+      return `${(bytes / (bytes < 1048576 ? 1024 : 1048576)).toFixed(1)} ${bytes < 1048576 ? 'KB' : 'MB'}`;
+    }
+    function browserOrigin() {
+      return location.hostname === '0.0.0.0' ? location.origin.replace('0.0.0.0', '127.0.0.1') : location.origin;
+    }
+    function imageUrl(raw) { return new URL(raw, browserOrigin()).href; }
+    async function copyImageUrl(url) {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+          notice('图片地址已复制');
+          return;
+        }
+      } catch { /* Insecure HTTP origins may reject the Clipboard API. */ }
+      const field = document.createElement('textarea');
+      field.value = url;
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.append(field);
+      field.select();
+      let copied = false;
+      try { copied = document.execCommand('copy'); } catch { /* Manual selection remains available. */ }
+      field.remove();
+      if (copied) { notice('图片地址已复制'); return; }
+      $('manual-copy-url').value = url;
+      $('manual-copy').showModal();
+      $('manual-copy-url').select();
+    }
+    function action(label, callback, danger = false) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+      if (danger) button.className = 'danger'; button.onclick = callback; return button;
+    }
+    async function loadFiles() {
+      try {
+        const result = await api('files?path=' + encodeURIComponent(currentPath));
+        drawCrumbs(result.path); $('count').textContent = `${result.total} 项${result.total > result.entries.length ? '（仅显示前 500 项）' : ''}`;
+        const body = $('rows'); body.replaceChildren(); $('empty').hidden = result.total !== 0;
+        for (const entry of result.entries) {
+          const row = document.createElement('tr');
+          const name = document.createElement('td'); const type = document.createElement('span'); type.className = 'type'; type.textContent = entry.directory ? '目录' : '图片'; name.append(type);
+          const link = document.createElement('a'); link.href = entry.directory ? '#' : entry.url; link.textContent = entry.name;
+          link.onclick = event => { event.preventDefault(); if (entry.directory) { currentPath = entry.path; loadFiles(); } else openPreview(entry); }; name.append(link);
+          const fileSize = document.createElement('td'); fileSize.textContent = size(entry.size);
+          const modified = document.createElement('td'); modified.textContent = new Date(entry.modified).toLocaleString('zh-CN');
+          const controls = document.createElement('td'); const group = document.createElement('div'); group.className = 'row-actions';
+          if (!entry.directory) {
+            group.append(action('复制链接', () => copyImageUrl(imageUrl(entry.url))));
+            group.append(action('删除', async () => { if (!confirm(`删除 ${entry.name}？`)) return; try { await api('files', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: entry.path})}); notice('已删除'); loadFiles(); } catch (error) { notice(error.message, true); } }, true));
+          }
+          controls.append(group); row.append(name, fileSize, modified, controls); body.append(row);
+        }
+      } catch (error) { notice(error.message, true); }
+    }
+    function openPreview(entry) {
+      previewUrl = imageUrl(entry.url);
+      $('preview-name').textContent = entry.name; $('preview-image').src = entry.url; $('open-link').href = entry.url; $('preview').showModal();
+    }
+    async function loadSettings() {
+      try {
+        const config = await api('settings'); $('username').value = config.username; $('password').value = '';
+        $('public-base').value = config.public_base; updateExamples();
+        await loadCleanup();
+      } catch (error) { notice(error.message, true); }
+    }
+    function validHours(value, max) {
+      const number = Number(value);
+      return value !== '' && Number.isInteger(number) && number >= 1 && number <= max ? number : null;
+    }
+    async function loadCleanup() {
+      const state = await api('cleanup');
+      $('auto-enabled').checked = state.enabled;
+      $('retention-hours').value = state.retention_hours;
+      $('interval-hours').value = state.interval_hours;
+      if (!$('manual-hours').value) $('manual-hours').value = state.retention_hours;
+      $('next-cleanup').textContent = state.enabled ? `下次检查：${new Date(state.next_run_at).toLocaleString('zh-CN')}` : '定时清理未启用';
+      const last = state.last_result;
+      $('last-cleanup').textContent = last
+        ? `上次${last.trigger === 'manual' ? '手动' : '定时'}清理：${new Date(last.finished_at).toLocaleString('zh-CN')}，删除 ${last.deleted} 个文件，释放 ${size(last.freed_bytes)}，失败 ${last.failed} 个`
+        : '暂无清理记录';
+    }
+    function updateExamples() {
+      const origin = $('public-base').value.trim().replace(/\/$/, '') || browserOrigin();
+      $('dav-url').textContent = origin + '/dav'; $('dav-user').textContent = $('username').value;
+      $('public-url').textContent = origin + '/images';
+    }
+    $('files-tab').onclick = () => show('files'); $('settings-tab').onclick = () => show('settings');
+    $('refresh-button').onclick = loadFiles; $('upload-button').onclick = () => $('upload').click();
+    $('upload').onchange = async event => {
+      const files = [...event.target.files]; if (!files.length) return;
+      $('upload-button').disabled = true;
+      let success = 0; const failures = [];
+      for (const file of files) {
+        try { const form = new FormData(); form.append('file', file); await api('files?path=' + encodeURIComponent(currentPath), {method: 'POST', body: form}); success++; }
+        catch (error) { failures.push(`${file.name}: ${error.message}`); }
+      }
+      $('upload-button').disabled = false; $('upload').value = ''; await loadFiles();
+      notice(failures.length ? `成功 ${success}，失败 ${failures.length}：${failures[0]}` : `已上传 ${success} 张图片`, !!failures.length);
+    };
+    $('username').oninput = updateExamples; $('public-base').oninput = updateExamples;
+    $('save-button').onclick = async () => {
+      if ($('password').value && $('password').value.length < 12) { notice('新密码至少需要 12 位', true); return; }
+      const button = $('save-button'); button.disabled = true;
+      try {
+        const result = await api('settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: $('username').value, password: $('password').value, public_base: $('public-base').value})});
+        $('password').value = ''; updateExamples(); notice(result.credentials_changed ? '已保存，新凭据将在下次请求时生效' : '已保存');
+      } catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+    };
+    $('save-cleanup').onclick = async () => {
+      const retention = validHours($('retention-hours').value, 8760);
+      const interval = validHours($('interval-hours').value, 168);
+      if (!retention || !interval) { notice('保留时长需为 1-8760 小时，检查间隔需为 1-168 小时', true); return; }
+      const button = $('save-cleanup'); button.disabled = true;
+      try {
+        await api('cleanup/policy', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:$('auto-enabled').checked,retention_hours:retention,interval_hours:interval})});
+        await loadCleanup(); notice('清理规则已保存');
+      } catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+    };
+    $('run-cleanup').onclick = async () => {
+      const hours = validHours($('manual-hours').value, 8760);
+      if (!hours) { notice('清理时长需为 1-8760 小时', true); return; }
+      if (!confirm(`确定删除修改时间早于 ${hours} 小时的文件吗？旧图片链接将失效，此操作不可恢复。`)) return;
+      const button = $('run-cleanup'); button.disabled = true;
+      try {
+        const result = await api('cleanup/run', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({hours})});
+        await loadCleanup();
+        notice(`删除 ${result.deleted} 个文件，释放 ${size(result.freed_bytes)}，失败 ${result.failed} 个`, !!result.failed);
+      } catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+    };
+    $('close-preview').onclick = () => $('preview').close();
+    $('preview').onclose = () => { $('preview-image').removeAttribute('src'); previewUrl = ''; };
+    $('copy-link').onclick = () => copyImageUrl(previewUrl);
+    $('close-manual-copy').onclick = () => $('manual-copy').close();
+    loadFiles();
+  </script>
+</body>
+</html>
