@@ -22,6 +22,8 @@ docker compose up -d --build
 
 清理范围仅为图片卷中的 `chatgpt2api/images/`，按**服务器 B 上的文件修改时间**判断，清除超过设定小时数的普通文件和由此产生的空目录；账号配置卷不受影响。旧文件删除后，已返回给用户的图片 URL 将变成 404；服务器 A 的本地副本或图片索引不会同步删除。请按图片需要保持可访问的时间设置保留时长。清理产生的记录保存在设置卷中。
 
+已有线上部署更新此功能时，将 `manager/app.py`、`manager/cleanup.py`、`manager/index.html`、`manager/Dockerfile` 上传覆盖到原项目对应位置，再执行 `docker compose up -d --build`。保留现有 `.env` 和数据卷；更新后到管理页手动启用定时清理。
+
 ## 在服务器 A 中填写
 
 | 配置项 | 本机测试值 |
@@ -59,4 +61,4 @@ docker compose ps
 docker compose logs --tail=100 manager nginx
 ```
 
-管理页只修改凭据和公开地址；监听端口、WebDAV 路径、存储目录及 HTTPS 域名仍由 `.env`、`nginx.conf`、Compose 配置文件控制。`/images/` 对所有人开放，请勿存储私密图片。
+管理页可修改凭据、公开地址和存储清理规则；监听端口、WebDAV 路径、存储目录及 HTTPS 域名仍由 `.env`、`nginx.conf`、Compose 配置文件控制。`/images/` 对所有人开放，请勿存储私密图片。
