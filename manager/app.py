@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import tempfile
@@ -8,10 +7,16 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from cleanup import get_state, run_cleanup, set_policy, start_scheduler, stop_scheduler
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-from passlib.hash import apr_md5_crypt
+from fastapi import APIRouter, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.wsgi import WSGIMiddleware
+from wsgidav.wsgidav_app import WsgiDAVApp
+from wsgidav.dav_error import DAVError, HTTP_FORBIDDEN
+from wsgidav.fs_dav_provider import FilesystemProvider
+
+from auth import DAVDomainController, prepare, session_version, settings, update_settings, verify_credentials
 
 
 @asynccontextmanager
@@ -24,46 +29,29 @@ async def lifespan(_app):
 
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+admin = APIRouter(prefix='/admin')
 DATA = Path('/data/chatgpt2api/images').resolve()
-CONFIG = Path('/config')
-SETTINGS = CONFIG / 'settings.json'
-HTPASSWD = CONFIG / 'dav.htpasswd'
 MAX_UPLOAD = 50 * 1024 * 1024
 ALLOWED = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
+DATA.mkdir(parents=True, exist_ok=True)
+SESSION_SECRET = prepare()
 
 
-def atomic_write(path: Path, contents: str):
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix='.tmp-')
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as target:
-            target.write(contents)
-        os.chmod(name, 0o600 if path == SETTINGS else 0o640)
-        os.replace(name, path)
-    finally:
-        if os.path.exists(name):
-            os.unlink(name)
+@app.middleware('http')
+async def protect_admin(request: Request, call_next):
+    path = request.url.path
+    public = {'/admin/login', '/admin/api/login'}
+    if (path == '/admin' or path.startswith('/admin/')) and path not in public:
+        if request.session.get('version') != session_version():
+            request.session.clear()
+            if path.startswith('/admin/api/'):
+                return JSONResponse({'detail': '请先登录'}, status_code=401)
+            return RedirectResponse('/admin/login', status_code=303)
+    return await call_next(request)
 
 
-def settings():
-    return json.loads(SETTINGS.read_text(encoding='utf-8'))
-
-
-def prepare():
-    CONFIG.mkdir(parents=True, exist_ok=True)
-    DATA.mkdir(parents=True, exist_ok=True)
-    if SETTINGS.exists() and HTPASSWD.exists():
-        return
-    if SETTINGS.exists() != HTPASSWD.exists():
-        raise RuntimeError('Incomplete configuration; restore the missing config file from backup')
-    username = os.environ.get('INITIAL_USERNAME', '')
-    password = os.environ.get('INITIAL_PASSWORD', '')
-    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', username) or len(password) < 12:
-        raise RuntimeError('Set INITIAL_USERNAME and INITIAL_PASSWORD (at least 12 characters) in .env')
-    atomic_write(HTPASSWD, f'{username}:{apr_md5_crypt.hash(password)}\n')
-    atomic_write(SETTINGS, json.dumps({'username': username, 'public_base': ''}))
-
-
-prepare()
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET,
+                   session_cookie='imagedav_session', max_age=8 * 3600, same_site='lax')
 
 
 def require_ui_request(marker: str | None):
@@ -94,10 +82,47 @@ def health():
 
 @app.get('/')
 def home():
+    return RedirectResponse('/admin/', status_code=303)
+
+
+@app.get('/admin')
+def admin_redirect():
+    return RedirectResponse('/admin/', status_code=303)
+
+
+@admin.get('/')
+def management_home():
     return FileResponse('/app/index.html')
 
 
-@app.get('/api/settings')
+@admin.get('/login')
+def login_page():
+    return FileResponse('/app/login.html')
+
+
+class LoginInput(BaseModel):
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=1024)
+
+
+@admin.post('/api/login')
+def login(value: LoginInput, request: Request, x_requested_with: str | None = Header(default=None)):
+    require_ui_request(x_requested_with)
+    if not verify_credentials(value.username, value.password):
+        raise HTTPException(401, '用户名或密码错误')
+    request.session.clear()
+    request.session['version'] = session_version()
+    return {'ok': True}
+
+
+@admin.post('/api/logout')
+def logout(request: Request, x_requested_with: str | None = Header(default=None)):
+    require_ui_request(x_requested_with)
+    request.session.clear()
+    return {'ok': True}
+
+
+@admin.get('/api/settings')
 def get_settings():
     current = settings()
     return {'username': current['username'], 'public_base': current['public_base'],
@@ -110,7 +135,7 @@ class SettingsInput(BaseModel):
     public_base: str = ''
 
 
-@app.post('/api/settings')
+@admin.post('/api/settings')
 def save_settings(value: SettingsInput, x_requested_with: str | None = Header(default=None)):
     require_ui_request(x_requested_with)
     username = value.username.strip()
@@ -119,20 +144,18 @@ def save_settings(value: SettingsInput, x_requested_with: str | None = Header(de
     current = settings()
     if username != current['username'] and not value.password:
         raise HTTPException(400, 'Changing the username requires a new password')
-    if value.password and len(value.password) < 12:
-        raise HTTPException(400, 'Password must have at least 12 characters')
+    if value.password and len(value.password) < 8:
+        raise HTTPException(400, 'Password must have at least 8 characters')
     base = value.public_base.strip().rstrip('/')
     if base:
         parsed = urlparse(base)
         if parsed.scheme not in {'http', 'https'} or not parsed.netloc or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
             raise HTTPException(400, 'Public address must be an HTTP(S) origin without a path')
-    if value.password:
-        atomic_write(HTPASSWD, f'{username}:{apr_md5_crypt.hash(value.password)}\n')
-    atomic_write(SETTINGS, json.dumps({'username': username, 'public_base': base}))
+    update_settings(username, value.password, base)
     return {'ok': True, 'credentials_changed': bool(value.password)}
 
 
-@app.get('/api/files')
+@admin.get('/api/files')
 def list_files(path: str = ''):
     directory = resolve_path(path)
     if not directory.is_dir():
@@ -152,7 +175,7 @@ def list_files(path: str = ''):
     return {'path': path.strip('/'), 'entries': entries[:500], 'total': len(entries)}
 
 
-@app.post('/api/files')
+@admin.post('/api/files')
 async def upload_file(file: UploadFile = File(...), path: str = '', x_requested_with: str | None = Header(default=None)):
     require_ui_request(x_requested_with)
     directory = resolve_path(path)
@@ -195,7 +218,7 @@ class DeleteInput(BaseModel):
     path: str
 
 
-@app.delete('/api/files')
+@admin.delete('/api/files')
 def delete_file(value: DeleteInput, x_requested_with: str | None = Header(default=None)):
     require_ui_request(x_requested_with)
     target = resolve_path(value.path)
@@ -205,7 +228,7 @@ def delete_file(value: DeleteInput, x_requested_with: str | None = Header(defaul
     return {'ok': True}
 
 
-@app.get('/api/cleanup')
+@admin.get('/api/cleanup')
 def cleanup_status():
     return get_state()
 
@@ -216,7 +239,7 @@ class CleanupPolicy(BaseModel):
     interval_hours: int = Field(ge=1, le=168)
 
 
-@app.post('/api/cleanup/policy')
+@admin.post('/api/cleanup/policy')
 def save_cleanup_policy(value: CleanupPolicy, x_requested_with: str | None = Header(default=None)):
     require_ui_request(x_requested_with)
     return set_policy(value.enabled, value.retention_hours, value.interval_hours)
@@ -226,7 +249,43 @@ class CleanupRequest(BaseModel):
     hours: int = Field(ge=1, le=8760)
 
 
-@app.post('/api/cleanup/run')
+@admin.post('/api/cleanup/run')
 def cleanup_now(value: CleanupRequest, x_requested_with: str | None = Header(default=None)):
     require_ui_request(x_requested_with)
     return run_cleanup(value.hours)
+
+
+@app.api_route('/images/{relative:path}', methods=['GET', 'HEAD'])
+def get_image(relative: str):
+    target = resolve_path(relative)
+    if not target.is_file() or target.name.startswith('.'):
+        raise HTTPException(404, 'Image not found')
+    return FileResponse(target, headers={'X-Content-Type-Options': 'nosniff'})
+
+
+app.include_router(admin)
+
+
+class ImageDAVProvider(FilesystemProvider):
+    def _loc_to_file_path(self, path, environ=None):
+        if '..' in path.split('/') or '\\' in path:
+            raise DAVError(HTTP_FORBIDDEN, 'Invalid path')
+        target = Path(super()._loc_to_file_path(path, environ))
+        root = Path(self.root_folder_path)
+        if not target.resolve().is_relative_to(root):
+            raise DAVError(HTTP_FORBIDDEN, 'Path is outside the data directory')
+        current = root
+        for part in target.relative_to(root).parts:
+            current /= part
+            if current.is_symlink():
+                raise DAVError(HTTP_FORBIDDEN, 'Symbolic links are not supported')
+        return str(target)
+
+
+app.mount('/dav', WSGIMiddleware(WsgiDAVApp({
+    'provider_mapping': {'/': ImageDAVProvider('/data', fs_opts={'follow_symlinks': False})},
+    'http_authenticator': {'domain_controller': DAVDomainController,
+                           'accept_basic': True, 'accept_digest': False, 'default_to_digest': False},
+    'dir_browser': {'enable': False},
+    'verbose': 1,
+})))

@@ -1,64 +1,83 @@
-# 图片 WebDAV 服务
+# ImageDAV 图片存储服务
 
-这是供 chatgpt2api 图片存储配置使用的独立服务：`/dav/` 需要账号密码，可上传图片；`/images/` 无需登录，可公开读取图片；`/admin/` 是需要登录的管理页面，可查看、预览、上传、删除图片及修改访问凭据。图片和设置分别保存在 Docker 数据卷中，重启容器不会丢失。
+一个 Docker 容器直接提供 WebDAV、图片访问和简单登录管理页，不需要额外的网关容器或 Web 服务器配置。
 
-## 本地启动（Docker Desktop）
+## 一条命令启动
 
-在 PowerShell 中执行：
-
-```powershell
-cd D:\test\image-webdav
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-docker compose up -d --build
-```
-
-打开 <http://127.0.0.1:8088/admin/>，用 `.env` 中的 `INITIAL_USERNAME` 和 `INITIAL_PASSWORD` 登录。本机现有 `.env` 将 `HTTP_BIND` 设为 `0.0.0.0`：Docker 监听所有网络接口，局域网设备可以通过 `http://本机局域网IP:8088/admin/` 访问（还需 Windows 防火墙放行 8088 端口）。新部署从 `.env.example` 复制的配置默认只监听 `127.0.0.1`。HTTP 会明文传输密码，建议只在可信网络测试，上线前务必更换测试密码并使用 HTTPS。
-
-管理页可以修改账号密码及公开访问地址。首次启动后凭据保存在 Docker 数据卷中；**修改 `.env` 不会重置已有凭据**，应在管理页修改。备份时请同时备份图片与设置两个数据卷。
-
-## 存储清理
-
-管理页“服务配置”中的“存储清理”默认关闭。开启后设置保留时长（1-8760 小时）和检查间隔（1-168 小时），保存后首次检查会在一个检查间隔之后执行；重启容器不会重置到期时间。也可输入小时数、确认后立即执行一次清理，无需开启定时任务。页面会显示上次删除的文件数、释放空间和失败数。
-
-清理范围仅为图片卷中的 `chatgpt2api/images/`，按**服务器 B 上的文件修改时间**判断，清除超过设定小时数的普通文件和由此产生的空目录；账号配置卷不受影响。旧文件删除后，已返回给用户的图片 URL 将变成 404；服务器 A 的本地副本或图片索引不会同步删除。请按图片需要保持可访问的时间设置保留时长。清理产生的记录保存在设置卷中。
-
-已有线上部署更新此功能时，将 `manager/app.py`、`manager/cleanup.py`、`manager/index.html`、`manager/Dockerfile` 上传覆盖到原项目对应位置，再执行 `docker compose up -d --build`。保留现有 `.env` 和数据卷；更新后到管理页手动启用定时清理。
-
-## 在服务器 A 中填写
-
-| 配置项 | 本机测试值 |
-| --- | --- |
-| 存储模式 | 先选择“本地 + WebDAV” |
-| WebDAV URL | A 在本机 Docker 内：`http://host.docker.internal:8088/dav`；A 运行在本机系统上：`http://127.0.0.1:8088/dav` |
-| 用户名、密码 | 管理页使用的凭据 |
-| WebDAV 根路径 | `chatgpt2api/images` |
-| 公开访问前缀 | 仅在同一台电脑测试：`http://127.0.0.1:8088/images`；跨设备访问：`http://本机局域网IP:8088/images` |
-
-如果 A 在另一台电脑或服务器上，WebDAV URL 也应使用运行本服务的电脑的可访问 IP 或域名，不能填写 A 自己的 `127.0.0.1`。返回给用户的图片地址同理：`127.0.0.1` 指的是**用户自己的设备**，跨设备使用时要填写用户也能访问到的 IP 或域名。管理页“公开地址”可填 `http://本机局域网IP:8088`，页面会据此展示对应的配置示例。
-
-在 A 中保存设置、点击“测试 WebDAV”，然后生成一张 `response_format=url` 的图片，确认返回的 `/images/` URL 可在目标设备上无需登录打开，管理页中也能看到图片。`b64_json` 仍通过 A 的 API 响应返回，并非让用户从此服务下载。WebDAV 上传失败时，即使选择“本地 + WebDAV”，该次图片请求也可能失败。
-
-## 在线上服务器 B 部署（使用现有 Nginx 反代）
-
-上传 `compose.yaml`、`nginx.conf`、`manager/`（包括新的 `cleanup.py`）和 `.env.example` 到 B；不要上传本机 `.env`，以免带上测试密码。在 B 的项目目录执行：
+在项目目录执行：
 
 ```bash
-if [ ! -f .env ]; then cp .env.example .env; fi
-nano .env
-chmod 600 .env
 docker compose up -d --build
+```
+
+不需要创建 `.env`。默认监听 `0.0.0.0:8088`，可通过 IP 访问。
+
+- 管理页面：`http://服务器IP:8088/admin/`
+- 默认用户名：`admin`
+- 默认密码：`admin2026`
+- WebDAV 地址：`http://服务器IP:8088/dav`
+- 图片公开地址：`http://服务器IP:8088/images/文件路径`
+
+本机测试打开 <http://127.0.0.1:8088/admin/>。管理页支持查看、预览、上传、删除、复制图片链接、修改账号密码、配置清理规则和退出登录。
+
+管理页通过登录表单建立会话；WebDAV 使用同一组账号密码的 Basic 认证。图片链接无需登录。可在管理页修改默认密码；修改后管理页需要重新登录，服务器 A 的 WebDAV 密码也需同步更新。新密码至少 8 位。HTTP 也可直接使用；如已有 HTTPS 反代，只需让它指向本服务的 8088 端口，保留完整请求路径。
+
+## 可选配置
+
+需要修改监听端口或首次登录凭据时，将 `.env.example` 复制为 `.env` 并修改：
+
+```dotenv
+INITIAL_USERNAME=admin
+INITIAL_PASSWORD=admin2026
+HTTP_BIND=0.0.0.0
+HTTP_PORT=8088
+```
+
+账号密码仅在新数据卷首次启动时初始化。之后保存在配置卷中，修改 `.env` 不会覆盖已有账号密码，应在管理页修改。
+
+## 服务器 A 的图片存储配置
+
+| 配置项 | 填写值 |
+| --- | --- |
+| WebDAV URL | `http://服务器B的IP:8088/dav` |
+| 用户名 | `admin`（或管理页设置的用户名） |
+| 密码 | `admin2026`（或管理页设置的密码） |
+| WebDAV 根路径 | `chatgpt2api/images` |
+| 公开访问前缀 | `http://服务器B的IP:8088/images` |
+| 存储模式 | 本地 + WebDAV，或仅 WebDAV |
+
+如使用域名，替换上表的协议、IP 和端口即可。在管理页“公开地址”填 `http://服务器B的IP:8088` 或实际域名，页面会展示对应配置。跨服务器访问不要填写 `127.0.0.1`。
+
+支持 `OPTIONS`、`PROPFIND`、`MKCOL`、`PUT`、`GET`、`HEAD`、`DELETE` 等标准 DAV 操作，与服务器 A 的 WebDAV 测试、图片上传兼容。返回图片 URL 时用户通过 B 访问；`b64_json` 仍由 A 的 API 响应返回。
+
+## 定时和立即清理
+
+进入“服务配置 → 存储清理”：
+
+- 定时清理默认关闭，可设置保留时长（1–8760 小时）和检查间隔（1–168 小时）。例如保留 72 小时、每小时检查一次。
+- 立即清理可独立输入小时数，确认后执行，不必开启定时清理。
+- 显示下次检查时间、上次删除数量、释放空间和失败数量。
+
+按 B 上文件的最后修改时间判断，只清理 `chatgpt2api/images/` 内过期的普通文件及空目录，不跟随符号链接。规则与结果重启后保留。旧文件删除后，图片 URL 会变成 404，不会同步清理 A 的本地副本或图片索引。
+
+## 更新旧版部署
+
+上传覆盖 `compose.yaml` 和整个 `manager/` 目录，保留原项目目录、`.env` 和数据卷。执行：
+
+```bash
+docker compose up -d --build --remove-orphans
 docker compose ps
 ```
 
-在 `.env` 中更换强密码。若现有反代运行在宿主机，保持 `HTTP_BIND=127.0.0.1`，反代目标是 `http://127.0.0.1:8088`；若现有反代在独立容器中、必须通过宿主机已发布的 8088 端口访问，则设 `HTTP_BIND=0.0.0.0`，反代目标使用它能够访问的宿主机地址。后者**同时允许外部直接访问 HTTP 8088**：必须在云安全组/云防火墙禁止公网入站 8088，只对外放行 80/443；不要单靠 UFW 防护 Docker 发布端口。也可让反代容器加入本项目的 Docker 网络、直接反代到 `nginx:80`，这样无需发布 8088 到公网。
+`--remove-orphans` 会移除旧版额外的容器，释放 8088 端口。已有图片、清理规则与账号密码继续保留；已有账号不会重置为默认账号。新版本运行只需一个应用容器。
 
-现有 Nginx 为域名配置 HTTPS，并将完整路径（包括 `/admin/`、`/dav/` 和 `/images/`）反代到本服务，允许 `MKCOL`、`PUT`、`DELETE`，请求体上限至少 50 MB。访问 `https://img.example.cn/admin/`（换成真实域名），在管理页将“访问域名”设为 `https://img.example.cn`。A 中填写 WebDAV URL `https://img.example.cn/dav`、根路径 `chatgpt2api/images`、公开访问前缀 `https://img.example.cn/images`。大陆服务器使用域名时，还需按实际情况办理备案等手续。**此方案不需要 Caddy，也不需要 `compose.prod.yaml`。**
+## 文件存放与查看日志
 
-## 检查服务
+图片存放在 Docker 命名卷 `images` 的 `chatgpt2api/images/` 下；配置、密码哈希、登录签名密钥和清理规则在 `settings` 卷。默认项目目录名为 `image-webdav` 时，卷名是 `image-webdav_images` 和 `image-webdav_settings`，不是项目目录内的普通文件。
 
-```powershell
+```bash
 docker compose ps
-docker compose logs --tail=100 manager nginx
+docker compose logs --tail=100 manager
 ```
 
-管理页可修改凭据、公开地址和存储清理规则；监听端口、WebDAV 路径、存储目录及 HTTPS 域名仍由 `.env`、`nginx.conf`、Compose 配置文件控制。`/images/` 对所有人开放，请勿存储私密图片。
+不要使用 `docker compose down -v`，它会删除图片和配置卷。

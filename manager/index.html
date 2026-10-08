@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Image WebDAV</title>
+  <title>ImageDAV</title>
   <style>
     :root { font-family: system-ui, "Microsoft YaHei", sans-serif; color: #202a31; background: #f4f6f6; }
     * { box-sizing: border-box; }
@@ -80,7 +80,7 @@
   </style>
 </head>
 <body>
-  <header><div class="header-inner"><span class="brand">Image WebDAV</span><nav><button id="files-tab" class="active" type="button">图片文件</button><button id="settings-tab" type="button">服务配置</button></nav></div></header>
+  <header><div class="header-inner"><span class="brand">ImageDAV</span><nav><button id="files-tab" class="active" type="button">图片文件</button><button id="settings-tab" type="button">服务配置</button></nav><button id="logout-button" type="button" style="margin-left:auto">退出登录</button></div></header>
   <main>
     <section id="files-view">
       <div class="heading"><div><h1>图片文件</h1><p>存储在此服务器上的图片</p></div><div class="actions"><input id="upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><button id="upload-button" class="primary" type="button">上传图片</button><button id="refresh-button" type="button">刷新</button></div></div>
@@ -90,7 +90,7 @@
     </section>
     <section id="settings-view" hidden>
       <div class="heading"><div><h1>服务配置</h1><p>管理上传凭据与公开访问地址</p></div></div>
-      <div class="section"><h2>访问凭据</h2><div class="fields"><label>WebDAV / 管理页用户名<input id="username" autocomplete="username" maxlength="64"></label><label>新密码<input id="password" type="password" autocomplete="new-password" placeholder="不修改请留空，修改至少 12 位"></label></div><div class="hint">两处入口使用同一组凭据。新密码至少 12 位；修改后浏览器可能要求重新登录。</div></div>
+      <div class="section"><h2>访问凭据</h2><div class="fields"><label>WebDAV / 管理页用户名<input id="username" autocomplete="username" maxlength="64"></label><label>新密码<input id="password" type="password" autocomplete="new-password" placeholder="不修改请留空，修改至少 8 位"></label></div><div class="hint">两处入口使用同一组凭据。新密码至少 8 位；修改后需要重新登录。</div></div>
       <div class="section"><h2>公开地址</h2><div class="fields"><label>访问域名（可选）<input id="public-base" type="url" placeholder="https://img.example.cn"></label></div><div class="hint">线上部署填国内服务器的 HTTPS 域名；留空时下方使用当前浏览器地址。</div></div>
       <div class="save-row"><button id="save-button" class="primary" type="button">保存配置</button></div>
       <div class="section" style="margin-top:28px"><h2>存储清理</h2>
@@ -119,6 +119,7 @@
     }
     async function api(path, options = {}) {
       const response = await fetch('/admin/api/' + path, {...options, headers: {'X-Requested-With': 'image-manager', ...(options.headers || {})}});
+      if (response.status === 401) { location.replace('/admin/login'); throw new Error('请重新登录'); }
       if (!response.ok) {
         let error;
         try { error = (await response.json()).detail; } catch { error = response.statusText; }
@@ -229,6 +230,7 @@
       $('dav-url').textContent = origin + '/dav'; $('dav-user').textContent = $('username').value;
       $('public-url').textContent = origin + '/images';
     }
+    $('logout-button').onclick = async () => { try { await api('logout', {method:'POST'}); location.replace('/admin/login'); } catch (error) { notice(error.message, true); } };
     $('files-tab').onclick = () => show('files'); $('settings-tab').onclick = () => show('settings');
     $('refresh-button').onclick = loadFiles; $('upload-button').onclick = () => $('upload').click();
     $('upload').onchange = async event => {
@@ -244,11 +246,11 @@
     };
     $('username').oninput = updateExamples; $('public-base').oninput = updateExamples;
     $('save-button').onclick = async () => {
-      if ($('password').value && $('password').value.length < 12) { notice('新密码至少需要 12 位', true); return; }
+      if ($('password').value && $('password').value.length < 8) { notice('新密码至少需要 8 位', true); return; }
       const button = $('save-button'); button.disabled = true;
       try {
         const result = await api('settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: $('username').value, password: $('password').value, public_base: $('public-base').value})});
-        $('password').value = ''; updateExamples(); notice(result.credentials_changed ? '已保存，新凭据将在下次请求时生效' : '已保存');
+        $('password').value = ''; updateExamples(); notice(result.credentials_changed ? '凭据已修改，请重新登录' : '已保存');
       } catch (error) { notice(error.message, true); } finally { button.disabled = false; }
     };
     $('save-cleanup').onclick = async () => {

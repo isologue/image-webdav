@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · ImageDAV</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f6f6; font: 15px system-ui, "Microsoft YaHei", sans-serif; color: #202a31; padding: 24px; }
+    form { width: min(360px, 100%); padding: 30px; background: white; border: 1px solid #d8e0df; border-radius: 8px; }
+    h1 { font-size: 24px; margin: 0 0 8px; color: #176b65; }
+    p { color: #627276; margin: 0 0 24px; }
+    label { display: block; margin: 16px 0; }
+    input { width: 100%; margin-top: 8px; padding: 11px; border: 1px solid #bdcccb; border-radius: 5px; font: inherit; }
+    button { width: 100%; padding: 11px; background: #087d73; border: 0; border-radius: 5px; color: white; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .6; }
+    #error { color: #a53131; margin: 15px 0 0; min-height: 20px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <form id="login"><h1>ImageDAV</h1><p>登录管理图片与清理规则</p>
+    <label>用户名<input id="username" name="username" autocomplete="username" value="admin" required maxlength="64"></label>
+    <label>密码<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+    <button id="submit" type="submit">登录</button><div id="error" role="alert"></div>
+  </form>
+  <script>
+    document.getElementById('login').onsubmit = async event => {
+      event.preventDefault();
+      const button = document.getElementById('submit');
+      const error = document.getElementById('error');
+      button.disabled = true; error.textContent = '';
+      try {
+        const response = await fetch('/admin/api/login', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'image-manager'}, body: JSON.stringify({username: document.getElementById('username').value, password: document.getElementById('password').value})});
+        if (!response.ok) { const result = await response.json(); throw new Error(typeof result.detail === 'string' ? result.detail : '登录失败'); }
+        location.replace('/admin/');
+      } catch (failure) { error.textContent = failure.message; } finally { button.disabled = false; }
+    };
+  </script>
+</body>
+</html>
