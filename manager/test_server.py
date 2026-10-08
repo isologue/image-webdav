@@ -1,9 +1,12 @@
 import base64
 import http.client
 import json
+import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import quote
 
 import uvicorn
@@ -53,7 +56,7 @@ class ServerTests(unittest.TestCase):
     def test_login_and_admin_protection(self):
         self.assertEqual(self.request('GET', '/admin/')[0], 303)
         self.assertEqual(self.request('GET', '/admin/login')[0], 200)
-        for route in ('settings', 'files', 'cleanup'):
+        for route in ('settings', 'files', 'cleanup', 'storage'):
             self.assertEqual(self.request('GET', '/admin/api/' + route)[0], 401)
         self.assertEqual(self.request('GET', '/api/settings')[0], 404)
         self.assertEqual(self.request('POST', '/admin/api/login', {'username': 'admin', 'password': 'wrong'})[0], 401)
@@ -94,6 +97,33 @@ class ServerTests(unittest.TestCase):
             self.assertIn(self.request('GET', '/dav/%2e%2e/config/settings.json', dav=True)[0], (403, 404))
         finally:
             (app.DATA / 'outside').unlink()
+
+    def test_storage_counts_nested_files_and_ignores_symlinks(self):
+        cookie = self.login()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'images'
+            (root / 'nested').mkdir(parents=True)
+            (root / 'one.png').write_bytes(b'1234')
+            (root / 'nested' / 'two.png').write_bytes(b'123456')
+            outside = Path(directory) / 'outside'
+            outside.mkdir()
+            (outside / 'secret').write_bytes(b'not image data')
+            (root / 'linked-dir').symlink_to(outside, target_is_directory=True)
+            (root / 'linked-file').symlink_to(outside / 'secret')
+            with patch.object(app, 'DATA', root):
+                status, _, body = self.request('GET', '/admin/api/storage', cookie=cookie)
+                self.assertEqual(status, 200)
+                usage = json.loads(body)
+                self.assertEqual(usage['file_count'], 2)
+                self.assertEqual(usage['file_bytes'], 10)
+                self.assertEqual(usage['scan_errors'], 0)
+                self.assertGreater(usage['disk_total_bytes'], 0)
+                self.assertLessEqual(usage['disk_free_bytes'], usage['disk_total_bytes'])
+                self.assertTrue(0 <= usage['disk_used_percent'] <= 100)
+                (root / 'one.png').unlink()
+                usage = json.loads(self.request('GET', '/admin/api/storage', cookie=cookie)[2])
+                self.assertEqual(usage['file_count'], 1)
+                self.assertEqual(usage['file_bytes'], 6)
 
     def test_password_change_invalidates_session_and_dav_password(self):
         cookie = self.login()

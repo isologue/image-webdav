@@ -60,6 +60,17 @@
     .config-list dd { user-select: all; }
     .config-list code { background: #e9efee; padding: 3px 5px; border-radius: 3px; }
     .save-row { margin-top: 22px; }
+    .storage-panel { margin-bottom: 30px; padding: 20px; border: 1px solid #d8e0df; border-radius: 8px; background: white; }
+    .storage-panel .heading { margin-bottom: 16px; align-items: center; }
+    .storage-panel h2 { margin: 0; }
+    .storage-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+    .storage-label { font-size: 12px; color: #607176; }
+    .storage-value { display: block; margin-top: 7px; font-size: 23px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .disk-caption { display: flex; justify-content: space-between; gap: 12px; margin-top: 20px; font-size: 12px; color: #607176; }
+    #disk-progress { display: block; width: 100%; height: 10px; margin-top: 8px; accent-color: #087d73; }
+    #disk-progress.high { accent-color: #b34535; }
+    #storage-status { margin: 10px 0 0; font-size: 12px; color: #607176; }
+    #storage-status.error { color: #a53131; }
     #notice { position: fixed; bottom: 20px; right: 20px; background: #173e3d; color: white; border-radius: 5px; padding: 12px 17px; max-width: min(440px, calc(100vw - 40px)); box-shadow: 0 8px 24px #25453a33; display: none; z-index: 3; }
     #notice.error { background: #a53131; }
     dialog { border: 0; border-radius: 6px; width: min(600px, calc(100vw - 32px)); padding: 20px; box-shadow: 0 24px 65px #25373755; }
@@ -71,6 +82,7 @@
       .header-inner { padding: 0 16px; gap: 16px; }
       main { padding: 22px 16px 60px; }
       .fields { grid-template-columns: 1fr; }
+      .storage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       th:nth-child(1) { width: 45%; } th:nth-child(2) { width: 20%; } th:nth-child(3) { display: none; }
       td:nth-child(3) { display: none; }
       .config-list { grid-template-columns: 1fr; }
@@ -82,6 +94,19 @@
 <body>
   <header><div class="header-inner"><span class="brand">ImageDAV</span><nav><button id="files-tab" class="active" type="button">图片文件</button><button id="settings-tab" type="button">服务配置</button></nav><button id="logout-button" type="button" style="margin-left:auto">退出登录</button></div></header>
   <main>
+    <section class="storage-panel" aria-labelledby="storage-title">
+      <div class="heading"><h2 id="storage-title">磁盘使用情况</h2><button id="refresh-storage" type="button">刷新用量</button></div>
+      <div class="storage-grid">
+        <div><span class="storage-label">图片目录文件大小</span><strong id="storage-files-bytes" class="storage-value">—</strong></div>
+        <div><span class="storage-label">文件数量</span><strong id="storage-file-count" class="storage-value">—</strong></div>
+        <div><span class="storage-label">磁盘总容量</span><strong id="storage-disk-total" class="storage-value">—</strong></div>
+        <div><span class="storage-label">磁盘可用空间</span><strong id="storage-disk-free" class="storage-value">—</strong></div>
+      </div>
+      <div class="disk-caption"><span id="storage-disk-used">磁盘已用：—</span><span id="storage-disk-percent">—</span></div>
+      <progress id="disk-progress" max="100" value="0" aria-label="磁盘使用率"></progress>
+      <p class="hint">磁盘容量统计图片目录所在的整个文件系统，包含其他服务用量。目录大小为文件大小合计；Docker Desktop 下磁盘容量可能是虚拟磁盘容量。</p>
+      <p id="storage-status" role="status">正在加载用量…</p>
+    </section>
     <section id="files-view">
       <div class="heading"><div><h1>图片文件</h1><p>存储在此服务器上的图片</p></div><div class="actions"><input id="upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><button id="upload-button" class="primary" type="button">上传图片</button><button id="refresh-button" type="button">刷新</button></div></div>
       <div class="bar"><div id="crumbs" class="crumbs"></div><span id="count" class="count"></span></div>
@@ -144,8 +169,31 @@
     }
     function size(bytes) {
       if (bytes == null) return '-';
-      if (bytes < 1024) return `${bytes} B`;
-      return `${(bytes / (bytes < 1048576 ? 1024 : 1048576)).toFixed(1)} ${bytes < 1048576 ? 'KB' : 'MB'}`;
+      const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
+      let unit = 0;
+      while (bytes >= 1024 && unit < units.length - 1) { bytes /= 1024; unit++; }
+      return `${unit ? bytes.toFixed(1) : bytes} ${units[unit]}`;
+    }
+    async function loadStorage() {
+      const button = $('refresh-storage');
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        const state = await api('storage');
+        $('storage-files-bytes').textContent = size(state.file_bytes);
+        $('storage-file-count').textContent = state.file_count.toLocaleString('zh-CN');
+        $('storage-disk-total').textContent = size(state.disk_total_bytes);
+        $('storage-disk-free').textContent = size(state.disk_free_bytes);
+        $('storage-disk-used').textContent = `磁盘已用：${size(state.disk_used_bytes)}`;
+        $('storage-disk-percent').textContent = `${state.disk_used_percent}%`;
+        $('disk-progress').value = state.disk_used_percent;
+        $('disk-progress').classList.toggle('high', state.disk_used_percent >= 90);
+        $('storage-status').classList.toggle('error', !!state.scan_errors);
+        $('storage-status').textContent = `更新于 ${new Date(state.updated_at).toLocaleString('zh-CN')} · 每 60 秒自动刷新${state.scan_errors ? ` · ${state.scan_errors} 处读取失败，目录统计不完整` : ''}${state.disk_used_percent >= 90 ? ' · 磁盘空间紧张，建议清理旧文件' : ''}`;
+      } catch (error) {
+        $('storage-status').classList.add('error');
+        $('storage-status').textContent = `用量刷新失败：${error.message}。已显示的数据可能过期，请重试。`;
+      } finally { button.disabled = false; }
     }
     function browserOrigin() {
       return location.hostname === '0.0.0.0' ? location.origin.replace('0.0.0.0', '127.0.0.1') : location.origin;
@@ -192,7 +240,7 @@
           const controls = document.createElement('td'); const group = document.createElement('div'); group.className = 'row-actions';
           if (!entry.directory) {
             group.append(action('复制链接', () => copyImageUrl(imageUrl(entry.url))));
-            group.append(action('删除', async () => { if (!confirm(`删除 ${entry.name}？`)) return; try { await api('files', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: entry.path})}); notice('已删除'); loadFiles(); } catch (error) { notice(error.message, true); } }, true));
+            group.append(action('删除', async () => { if (!confirm(`删除 ${entry.name}？`)) return; try { await api('files', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: entry.path})}); notice('已删除'); loadFiles(); loadStorage(); } catch (error) { notice(error.message, true); } }, true));
           }
           controls.append(group); row.append(name, fileSize, modified, controls); body.append(row);
         }
@@ -232,7 +280,8 @@
     }
     $('logout-button').onclick = async () => { try { await api('logout', {method:'POST'}); location.replace('/admin/login'); } catch (error) { notice(error.message, true); } };
     $('files-tab').onclick = () => show('files'); $('settings-tab').onclick = () => show('settings');
-    $('refresh-button').onclick = loadFiles; $('upload-button').onclick = () => $('upload').click();
+    $('refresh-storage').onclick = loadStorage;
+    $('refresh-button').onclick = () => { loadFiles(); loadStorage(); }; $('upload-button').onclick = () => $('upload').click();
     $('upload').onchange = async event => {
       const files = [...event.target.files]; if (!files.length) return;
       $('upload-button').disabled = true;
@@ -241,7 +290,7 @@
         try { const form = new FormData(); form.append('file', file); await api('files?path=' + encodeURIComponent(currentPath), {method: 'POST', body: form}); success++; }
         catch (error) { failures.push(`${file.name}: ${error.message}`); }
       }
-      $('upload-button').disabled = false; $('upload').value = ''; await loadFiles();
+      $('upload-button').disabled = false; $('upload').value = ''; await loadFiles(); loadStorage();
       notice(failures.length ? `成功 ${success}，失败 ${failures.length}：${failures[0]}` : `已上传 ${success} 张图片`, !!failures.length);
     };
     $('username').oninput = updateExamples; $('public-base').oninput = updateExamples;
@@ -270,7 +319,7 @@
       const button = $('run-cleanup'); button.disabled = true;
       try {
         const result = await api('cleanup/run', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({hours})});
-        await loadCleanup();
+        await loadCleanup(); loadStorage();
         notice(`删除 ${result.deleted} 个文件，释放 ${size(result.freed_bytes)}，失败 ${result.failed} 个`, !!result.failed);
       } catch (error) { notice(error.message, true); } finally { button.disabled = false; }
     };
@@ -279,6 +328,9 @@
     $('copy-link').onclick = () => copyImageUrl(previewUrl);
     $('close-manual-copy').onclick = () => $('manual-copy').close();
     loadFiles();
+    loadStorage();
+    setInterval(() => { if (!document.hidden) loadStorage(); }, 60000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadStorage(); });
   </script>
 </body>
 </html>

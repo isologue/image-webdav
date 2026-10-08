@@ -1,5 +1,7 @@
 import os
 import re
+import shutil
+import stat
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -173,6 +175,36 @@ def list_files(path: str = ''):
                         'url': public_url(rel, current['public_base']) if item.is_file() else None})
     entries.sort(key=lambda item: (not item['directory'], item['name'].lower()), reverse=False)
     return {'path': path.strip('/'), 'entries': entries[:500], 'total': len(entries)}
+
+
+@admin.get('/api/storage')
+def storage_usage():
+    disk = shutil.disk_usage(DATA)
+    file_count = 0
+    file_bytes = 0
+    scan_errors = 0
+
+    def scan_error(_error):
+        nonlocal scan_errors
+        scan_errors += 1
+
+    for directory, dirs, files in os.walk(DATA, followlinks=False, onerror=scan_error):
+        dirs[:] = [name for name in dirs if not (Path(directory) / name).is_symlink()]
+        for name in files:
+            try:
+                info = (Path(directory) / name).lstat()
+                if stat.S_ISREG(info.st_mode):
+                    file_count += 1
+                    file_bytes += info.st_size
+            except FileNotFoundError:
+                continue  # A concurrent upload, delete or cleanup may change the directory.
+            except OSError as exc:
+                scan_error(exc)
+    return {'disk_total_bytes': disk.total, 'disk_used_bytes': disk.used,
+            'disk_free_bytes': disk.free,
+            'disk_used_percent': round(disk.used / disk.total * 100, 1) if disk.total else 0,
+            'file_count': file_count, 'file_bytes': file_bytes, 'scan_errors': scan_errors,
+            'updated_at': datetime.now(timezone.utc).isoformat()}
 
 
 @admin.post('/api/files')
